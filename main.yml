@@ -34,9 +34,9 @@
         - /etc/audit/rules.d/audit.rules
         - /etc/sysconfig/selinux
 
-#    - name: Disable SELinux
-#      ansible.posix.selinux:
-#        state: disabled
+    - name: Disable SELinux
+      ansible.posix.selinux:
+        state: disabled
 
     - name: Set password expiration days
       ansible.builtin.lineinfile:
