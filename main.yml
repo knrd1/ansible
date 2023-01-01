@@ -1,0 +1,113 @@
+# OS hardening using Ansible
+
+- name: OS Hardening
+  hosts: all
+  gather_facts: yes
+  become: yes
+
+# Handlers
+
+  handlers:
+
+    - name: restart sshd
+      service:
+        name: sshd
+        state: restarted
+
+    - name: restart auditd
+      service:
+        name: auditd
+        state: restarted
+
+# Tasks for hardening
+
+  tasks:
+
+    - name: Backup existing configuration
+      copy:
+        src: "{{ item }}"
+        dest: "{{ item }}_{{ ansible_date_time.iso8601 }}"
+        remote_src: yes
+      loop:
+        - /etc/login.defs
+        - /etc/ssh/sshd_config
+        - /etc/audit/rules.d/audit.rules
+        - /etc/sysconfig/selinux
+
+#    - name: Disable SELinux
+#      ansible.posix.selinux:
+#        state: disabled
+
+    - name: Set password expiration days
+      ansible.builtin.lineinfile:
+        path: "/etc/login.defs"
+        regexp: "{{ item.name }}"
+        line: "{{ item.name }} {{ item.value }}"
+        state: present
+        mode: 0644
+        owner: root
+        group: root
+      loop:
+      - name: "PASS_MAX_DAYS"
+        value: "60"
+      - name: "PASS_MIN_DAYS"
+        value: "7"
+      - name: "PASS_WARN_AGE"
+        value: "7"
+
+    - name: Modify OpenSSH settings and restart sshd
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^(#)?{{ item.name }}"
+        line: "{{ item.name }} {{ item.value }}"
+        state: present
+        mode: 0600
+        owner: root
+        group: root
+        validate: 'sshd -t -f %s'
+      loop:
+      - name: "Protocol"
+        value: "2"
+      - name: "PermitRootLogin"
+        value: "no"
+      - name: "LogLevel"
+        value: "INFO"
+      - name: "X11Forwarding"
+        value: "no"
+      - name: "MaxAuthTries"
+        value: "3"
+      - name: "MACs"
+        value: "hmac-sha2-512,hmac-sha2-256"
+      - name: "Banner"
+        value: "/etc/issue.net"
+      notify:
+        - restart sshd
+
+    - name: Add audit rules
+      ansible.builtin.lineinfile:
+        path: /etc/audit/rules.d/audit.rules
+        line: "{{ item }}"
+        create: yes
+        mode: 0600
+        owner: root
+        group: root
+      loop:
+       - "-a always,exit -F arch=b64 -S settimeofday -k time-change"
+       - "-a always,exit -F arch=b64 -S stime -k time-change"
+       - "-a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change"
+       - "-a always,exit -F arch=b64 -S clock_settime -k time-change"
+       - "-w /etc/localtime -p wa -k time-change"
+
+    - name: Restart auditd
+      command: /usr/sbin/service auditd restart
+      args:
+        warn: false
+
+    - name: Ensure sshd and auditd are started and enabled at boot time
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - sshd
+        - auditd
